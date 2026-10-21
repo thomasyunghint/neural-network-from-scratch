@@ -1,4 +1,4 @@
-# numpy-nn: a tiny deep learning framework from scratch in pure NumPy
+# Neural Network from Scratch (pure NumPy)
 
 No PyTorch, no TensorFlow. Forward pass, backpropagation and optimizers are written by hand, and a two-layer MLP (784-128-10) trained with them reaches **>= 97% test accuracy on MNIST**. Every layer's `backward` is verified against **numerical gradient checks** (finite differences), so the backprop is provably correct, not just "it runs".
 
