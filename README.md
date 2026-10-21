@@ -1,6 +1,6 @@
 # Neural Network from Scratch (pure NumPy)
 
-I wanted to understand what actually happens when you call `loss.backward()`, so I built a small deep learning framework with nothing but NumPy: layers with hand-written forward and backward passes, SGD and Adam optimizers, and a training loop. A two-layer MLP trained with it gets **97.4% test accuracy on MNIST**, and every `backward` is checked against numerical gradients so I know the math is right, not just that the loss goes down.
+I wanted to understand what actually happens when you call `loss.backward()`, so I built a small deep learning framework with nothing but NumPy: layers with their own forward and backward passes, SGD and Adam optimizers, and a training loop. A two-layer MLP trained with it gets **97.4% test accuracy on MNIST**, and every `backward` is checked against numerical gradients so I know the math is right, not just that the loss goes down.
 
 ![training curves](training_curve.png)
 
