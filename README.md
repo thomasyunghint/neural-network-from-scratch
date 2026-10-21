@@ -1,41 +1,60 @@
 # Neural Network from Scratch (pure NumPy)
 
-Forward pass, backpropagation and optimizers are written by hand, and a two-layer MLP (784-128-10) trained with them reaches **>= 97% test accuracy on MNIST**. Every layer's `backward` is verified against **numerical gradient checks** (finite differences), so the backprop is provably correct, not just "it runs".
+I wanted to understand what actually happens when you call `loss.backward()`, so I built a small deep learning framework with nothing but NumPy: layers with hand-written forward and backward passes, SGD and Adam optimizers, and a training loop. A two-layer MLP trained with it gets **97.4% test accuracy on MNIST**, and every `backward` is checked against numerical gradients so I know the math is right, not just that the loss goes down.
+
+![training curves](training_curve.png)
+
+## What's inside
 
 ```
 nn/
-├── layers.py   # Linear, ReLU, Sigmoid, Tanh, Dropout, SoftmaxCrossEntropy (each with forward / backward)
-├── optim.py    # SGD (momentum), Adam
-└── model.py    # Sequential container: parameters() / train() / eval() / predict()
-data.py         # downloads and parses the MNIST idx files, normalization, one-hot, minibatch iterator
-train.py        # training script: per-epoch loss / accuracy, saves the training curves
+├── layers.py   # Linear, ReLU, Sigmoid, Tanh, Dropout, SoftmaxCrossEntropy
+├── optim.py    # SGD with momentum, Adam
+└── model.py    # Sequential container
+data.py         # downloads MNIST, parses the raw idx files, normalizes, batches
+train.py        # trains the MLP, prints per-epoch metrics, saves the curves above
 tests/
-├── test_gradcheck.py  # per-layer and end-to-end numerical gradient checks
-└── test_optim.py      # optimizer convergence sanity tests
+├── test_gradcheck.py  # finite-difference checks for every layer and the full network
+└── test_optim.py      # optimizers actually minimize a simple function
 ```
 
-## Quick start
+The API looks like a very small PyTorch, on purpose. Building and training a model is a few lines:
+
+```python
+from nn import Sequential, Linear, ReLU, SoftmaxCrossEntropy, Adam
+
+model = Sequential(Linear(784, 128), ReLU(), Linear(128, 10))
+criterion = SoftmaxCrossEntropy()
+opt = Adam(model.parameters(), lr=1e-3)
+
+for xb, yb in batches:
+    logits = model(xb)
+    loss = criterion(logits, yb)
+    model.backward(criterion.backward())   # no autograd: this is the chain rule, by hand
+    opt.step()
+    opt.zero_grad()
+```
+
+## Running it
 
 ```bash
 pip install -r requirements.txt
-pytest -q            # gradient checks (~0.3 s)
-python train.py      # downloads MNIST (~11 MB), trains for 10 epochs on CPU
+pytest -q          # gradient checks, takes well under a second
+python train.py    # downloads MNIST (~11 MB) on first run, then trains for 10 epochs on CPU
 ```
 
-Optional flags:
+A few knobs if you want to play with it:
 
 ```bash
-python train.py --optim sgd --lr 0.05 --epochs 5   # SGD with momentum instead of Adam
-python train.py --hidden 256 --dropout 0.2          # wider hidden layer + dropout
+python train.py --optim sgd --lr 0.05       # SGD with momentum instead of Adam
+python train.py --hidden 256 --dropout 0.2  # wider hidden layer, with dropout
 ```
 
 ## Results
 
-Default config: Adam, lr = 1e-3, batch size 64, 10 epochs, He initialization, no regularization.
+Default setup: 784-128-10 MLP, ReLU, He init, Adam at lr 1e-3, batch size 64, 10 epochs, no regularization. The whole run takes under a minute on a laptop CPU.
 
 ```
-train (60000, 784), test (10000, 784)
-parameters: 101,770
 epoch  1/10 | loss 0.2432 | train acc 92.66% | test acc 96.11% | 2.8s
 epoch  2/10 | loss 0.1081 | train acc 96.76% | test acc 96.99% | 3.5s
 epoch  3/10 | loss 0.0744 | train acc 97.67% | test acc 97.31% | 4.1s
@@ -49,91 +68,73 @@ epoch 10/10 | loss 0.0185 | train acc 99.37% | test acc 97.38% | 4.2s
 Final test accuracy 97.38% (best 97.62%)
 ```
 
-| Metric | Value |
+| | |
 |---|---|
-| Test accuracy (epoch 10) | **97.38%** |
+| Test accuracy after 10 epochs | **97.38%** |
 | Best test accuracy (epoch 7) | **97.62%** |
 | Parameters | 101,770 |
-| Time per epoch (CPU, NumPy) | ~4 s |
+| Time per epoch | ~4 s |
 
-Training accuracy keeps climbing while test accuracy plateaus around 97.5%, so the model starts to overfit slightly in later epochs. `--dropout 0.2` or `--weight-decay 1e-4` mitigates this.
+You can see the model start to overfit after epoch 5 or so: train accuracy keeps climbing toward 99.4% while test accuracy sits around 97.5%. Adding `--dropout 0.2` or a little weight decay closes that gap. I left the default run unregularized because it makes the overfitting visible in the plot, which I think is more interesting than hiding it.
 
-![training curves](training_curve.png)
+## The math, briefly
 
-## Backpropagation, derived briefly
+Backprop is just the chain rule applied layer by layer. If $\delta = \partial L / \partial y$ is the gradient flowing in from the layer above, each layer has to produce two things: the gradient for its own parameters, and $\partial L / \partial x$ to hand to the layer below.
 
-Let $N$ be the batch size and $\delta = \partial L / \partial y$ the upstream gradient (same shape as the layer output $y$). Each layer has to answer two questions: **what is the gradient with respect to its parameters**, and **what is $\partial L / \partial x$ to pass to the layer before it**.
-
-### Fully connected layer $y = xW + b$
-
-$x \in \mathbb{R}^{N\times D_{in}}$, $W \in \mathbb{R}^{D_{in}\times D_{out}}$, $b \in \mathbb{R}^{D_{out}}$.
+**Linear layer**, $y = xW + b$:
 
 $$
 \frac{\partial L}{\partial W} = x^\top \delta,\qquad
-\frac{\partial L}{\partial b} = \sum_{i=1}^{N} \delta_i,\qquad
+\frac{\partial L}{\partial b} = \sum_{i} \delta_i,\qquad
 \frac{\partial L}{\partial x} = \delta\, W^\top
 $$
 
-Intuition: the gradient of $W$ is the outer product of "input" and "output gradient" summed over the batch; $b$ is added once per sample, so its gradient is $\delta$ summed over rows.
+These three lines are the entire `Linear.backward`. The bias is added once per sample, which is why its gradient is a sum over the batch.
 
-### Element-wise activations $y = \sigma(x)$
+**Element-wise activations**, $y = \sigma(x)$: just $\partial L / \partial x = \delta \odot \sigma'(x)$.
 
-$$
-\frac{\partial L}{\partial x} = \delta \odot \sigma'(x)
-$$
-
-| Activation | $\sigma(x)$ | $\sigma'(x)$ |
+| | $\sigma(x)$ | $\sigma'(x)$ |
 |---|---|---|
 | ReLU | $\max(0, x)$ | $\mathbb{1}[x > 0]$ |
 | Sigmoid | $s = 1/(1+e^{-x})$ | $s(1-s)$ |
 | Tanh | $t = \tanh x$ | $1 - t^2$ |
 
-The derivatives of Sigmoid and Tanh can be written in terms of the forward output, so caching the output is all that is needed.
+Sigmoid and Tanh derivatives can be written in terms of the output, so the forward pass only needs to cache what it returned.
 
-### Softmax + cross-entropy, fused
-
-For logits $z \in \mathbb{R}^{C}$, $p = \mathrm{softmax}(z)$ and true class $y$, the per-sample loss is $\ell = -\log p_y$.
-
-Differentiating softmax and cross-entropy together makes most of the Jacobian cancel, leaving a very clean result:
+**Softmax + cross-entropy.** This was the part that made the most sense to me once I saw it. If you differentiate softmax and cross-entropy separately, you get a $C \times C$ Jacobian per sample that is slow and numerically touchy. If you differentiate them together, almost everything cancels and you are left with
 
 $$
 \frac{\partial \ell}{\partial z_j} = p_j - \mathbb{1}[j = y]
 $$
 
-i.e. "predicted probability minus one-hot label". For the batch mean, divide by $N$.
+which is literally "predicted probability minus the one-hot label". That is why the two are fused into one class here.
 
-**Numerical stability.** Computing $e^{z}$ directly overflows for large $z$. The log-sum-exp trick fixes this:
+The other thing softmax needs is the log-sum-exp trick. Computing $e^{z}$ directly overflows for large logits, so instead:
 
 $$
 \log p_j = z_j - \max_k z_k - \log \sum_k e^{z_k - \max_k z_k}
 $$
 
-After subtracting the max every exponent is $\le 1$, so nothing overflows; $p = e^{\log p}$ is then recovered for the backward pass. `tests/test_gradcheck.py` includes a test with $z = [1000, -1000, 0]$ to confirm this.
+Subtracting the max keeps every exponent at or below 1. There is a test that feeds in logits of $[1000, -1000, 0]$ to make sure this does not produce `inf` or `nan`.
 
-### Chaining layers (Sequential)
+**Sequential** is a `for layer in reversed(self.layers)` loop that passes each layer's returned gradient into the previous one. That loop is the chain rule.
 
-For an $L$-layer network $y = f_L \circ \cdots \circ f_1 (x)$, backprop starts from $\partial L / \partial y$ and calls each layer's `backward` **in reverse order**, feeding the return value into the previous layer. `Sequential.backward` is a single `for layer in reversed(self.layers)` loop; that loop *is* the chain rule.
+**Optimizers.** SGD with momentum keeps a velocity $v \leftarrow \mu v + g$ and steps along it. Adam keeps running averages of the gradient and its square, bias-corrects them, and divides one by the square root of the other.
 
-### Optimizers
+## How I know the gradients are right
 
-- **SGD + momentum**: $v \leftarrow \mu v + g,\; w \leftarrow w - \eta v$
-- **Adam**: exponential moving averages of the first moment $m$ and second moment $v$, bias-corrected, then $w \leftarrow w - \eta\, \hat m / (\sqrt{\hat v} + \epsilon)$
-
-## How the gradient checks work
-
-For any scalar function $f$, central differences give
+Writing backward passes by hand is easy to get subtly wrong: a missing transpose, a sum over the wrong axis, a factor of $1/N$ that should not be there. Everything still trains, just worse, and you would never know. So every layer is checked against central finite differences:
 
 $$
 \frac{\partial f}{\partial x_i} \approx \frac{f(x + h e_i) - f(x - h e_i)}{2h},\quad h = 10^{-5}
 $$
 
-To turn a layer with vector output into a scalar, pick a fixed random matrix $R$ and set $f(x) = \sum \big(\text{layer}(x) \odot R\big)$. Then $\partial f / \partial y = R$, so `layer.backward(R)` must match the numerical gradient of $f$ with respect to $x$ (or $W$, $b$). The tests run in float64 and require a relative error below $10^{-6}$.
+To turn a layer with a vector output into a scalar function, I dot the output with a fixed random matrix $R$. Then the analytic gradient is simply `layer.backward(R)`, and it has to match the numerical one to a relative error below $10^{-6}$ in float64. There is one check per layer, one for each of $W$, $b$ and $x$ in `Linear`, and one that chains three `Linear` layers, `Tanh`, `ReLU` and the loss together to make sure `Sequential` passes gradients through correctly.
 
-Beyond per-layer checks, `test_full_mlp_end_to_end_grad` chains three Linear layers, Tanh, ReLU and the cross-entropy loss and checks the whole thing, confirming that `Sequential` wires the chain rule correctly.
+A small detail that bit me: ReLU is not differentiable at exactly 0, so the test nudges any input that lands too close to 0 before checking. Otherwise the finite difference straddles the kink and the test fails for a reason that has nothing to do with the implementation.
 
-## Design notes
+## Things I chose not to do
 
-- **No autograd.** Each layer's `backward` is written by hand so the math of backprop stays visible instead of hidden inside a computation graph.
-- **Softmax and cross-entropy are one class.** Implemented separately, the softmax Jacobian is a $C\times C$ matrix per sample, slow and numerically fragile; fused, the gradient is simply $p - \text{onehot}$.
-- **Parameters are `Parameter(data, grad)` objects.** Optimizers only hold a list of them and never need to know which layer owns what.
-- **CPU only.** A ~100k-parameter MLP in NumPy matmuls takes a few seconds per epoch.
+- **No autograd.** A computation graph would be the next step, but the point of this project was to see the derivatives, not hide them.
+- **No GPU.** A 100k-parameter MLP in NumPy runs at a few seconds per epoch, which is plenty for MNIST.
+- **No convolutions, batch norm, or learning-rate schedules.** All reasonable extensions. The gradient-check harness makes adding a new layer safe, which is part of why I built it first.
