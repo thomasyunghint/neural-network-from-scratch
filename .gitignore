@@ -1,0 +1,21 @@
+# Dataset (downloaded automatically by train.py)
+data/
+
+# Model weights
+checkpoints/
+
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+*.egg-info/
+.venv/
+venv/
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# training_curve.png is intentionally tracked; README embeds it
